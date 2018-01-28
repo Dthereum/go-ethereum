@@ -1,3 +1,5 @@
+# Ethereum Deliverance Fork: NOT READY! IN PROGRESS!
+
 ## Go Ethereum
 
 Official golang implementation of the Ethereum protocol.
