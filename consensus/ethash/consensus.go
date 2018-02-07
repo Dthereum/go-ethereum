@@ -38,6 +38,7 @@ import (
 var (
 	FrontierBlockReward    *big.Int = big.NewInt(5e+18) // Block reward in wei for successfully mining a block
 	ByzantiumBlockReward   *big.Int = big.NewInt(3e+18) // Block reward in wei for successfully mining a block upward from Byzantium
+	DeliveranceBlockReward *big.Int = big.NewInt(1e+12) // Block reward in wei for a Deliverance hash^2
 	maxUncles                       = 2                 // Maximum number of uncles allowed in a single block
 	allowedFutureBlockTime          = 15 * time.Second  // Max time from current time allowed for blocks, before they're considered future blocks
 )
@@ -298,6 +299,8 @@ func (ethash *Ethash) CalcDifficulty(chain consensus.ChainReader, time uint64, p
 func CalcDifficulty(config *params.ChainConfig, time uint64, parent *types.Header) *big.Int {
 	next := new(big.Int).Add(parent.Number, big1)
 	switch {
+	case config.IsDeliverance(next):
+		return calcDifficultyDeliverance(time, parent)
 	case config.IsByzantium(next):
 		return calcDifficultyByzantium(time, parent)
 	case config.IsHomestead(next):
@@ -317,6 +320,32 @@ var (
 	bigMinus99    = big.NewInt(-99)
 	big2999999    = big.NewInt(2999999)
 )
+
+// simplified difficulty algorithm
+func calcDifficultyDeliverance(time uint64, parent *types.Header) *big.Int {
+	// calculate time delta
+	bigTime := new(big.Int).SetUint64(time)
+	bigParentTime := new(big.Int).Set(parent.Time)
+	dt := new(big.Int)
+	dt.Sub(bigTime, bigParentTime)
+	dt.Max(dt, 1)
+	// max adjustment down
+	dmin := new(big.Int)
+	dmin.Rsh(parent.Difficulty,1) //divide by 2
+	// max adjustment up
+	dmax := new(big.Int)
+	dmax.Lsh(parent.Dificulty,1) //multiply by 2
+	// new difficulty = difficulty * time difference / 10 seconds
+	d := new(big.Int)
+	d.Mul(parent.Difficulty, 10)
+	d.Div(d, dt) //correction to get to 10s block
+	// apply limits to max and min correction
+	d.Max(d, dmin)
+	d.Min(d, dmax)
+	d.Max(d, params.MinimumDifficulty)
+
+	return d
+}
 
 // calcDifficultyByzantium is the difficulty adjustment algorithm. It returns
 // the difficulty that a new block should have when created at time given the
@@ -539,10 +568,16 @@ var (
 // included uncles. The coinbase of each uncle block is also rewarded.
 func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header, uncles []*types.Header) {
 	// Select the correct block reward based on chain progression
-	blockReward := FrontierBlockReward
-	if config.IsByzantium(header.Number) {
-		blockReward = ByzantiumBlockReward
+	blockreward := new(big.Int)
+	switch {
+	case (config.IsByzantium(header.Number)):
+		blockReward.Set(ByzantiumBlockReward)
+	case (config.IsDeliverance(header.Number)):
+		blockreward.Set(calcRewardDeliverance(header))
+	default:
+		blockReward.Set(FrontierBlockReward)
 	}
+
 	// Accumulate the rewards for the miner and any included uncles
 	reward := new(big.Int).Set(blockReward)
 	r := new(big.Int)
@@ -557,4 +592,17 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 		reward.Add(reward, r)
 	}
 	state.AddBalance(header.Coinbase, reward)
+}
+
+//calculate mining reward proportional to difficulty
+func calcRewardDeliverance(header *types.Header) *big.Int {
+	// calculate reward proportional to difficulty
+	r := new(big.int)
+	r.Set(header.Difficulty)
+	r.Sqrt(r)
+	r.Mul(r, DeliveranceBlockReward)
+
+	// reward is cut by half every 18 months (5M blocks)
+
+	return r
 }
