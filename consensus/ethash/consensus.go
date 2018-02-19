@@ -323,26 +323,19 @@ var (
 
 // simplified difficulty algorithm
 func calcDifficultyDeliverance(time uint64, parent *types.Header) *big.Int {
-	// calculate time delta
-	bigTime := new(big.Int).SetUint64(time)
-	bigParentTime := new(big.Int).Set(parent.Time)
-	dt := new(big.Int)
-	dt.Sub(bigTime, bigParentTime)
-	dt.Max(dt, 1)
-	// max adjustment down
-	dmin := new(big.Int)
-	dmin.Rsh(parent.Difficulty,1) //divide by 2
-	// max adjustment up
-	dmax := new(big.Int)
-	dmax.Lsh(parent.Dificulty,1) //multiply by 2
+	// calculate time delta in seconds, at least 1
+	dt := new(big.Int).SetUint64(time)
+	dt = dt.Sub(dt, parent.Time)
+	dt = math.BigMax(dt, big1)
 	// new difficulty = difficulty * time difference / 10 seconds
-	d := new(big.Int)
-	d.Mul(parent.Difficulty, 10)
-	d.Div(d, dt) //correction to get to 10s block
-	// apply limits to max and min correction
-	d.Max(d, dmin)
-	d.Min(d, dmax)
-	d.Max(d, params.MinimumDifficulty)
+	d := new(big.Int).Mul(parent.Difficulty, big10)
+	d = d.Div(d, dt)
+	// max adjustment down (half)
+	d = math.BigMax(d, new(big.Int).Div(parent.Difficulty, big2))
+	// max adjustment up (double)
+	d = math.BigMin(d, new(big.Int).Mul(parent.Difficulty, big2))
+	// minimum difficulty
+	d = math.BigMax(d, params.MinimumDifficulty)
 
 	return d
 }
@@ -568,12 +561,12 @@ var (
 // included uncles. The coinbase of each uncle block is also rewarded.
 func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header *types.Header, uncles []*types.Header) {
 	// Select the correct block reward based on chain progression
-	blockreward := new(big.Int)
+	blockReward := new(big.Int)
 	switch {
 	case (config.IsByzantium(header.Number)):
 		blockReward.Set(ByzantiumBlockReward)
 	case (config.IsDeliverance(header.Number)):
-		blockreward.Set(calcRewardDeliverance(header))
+		blockReward.Set(calcRewardDeliverance(header))
 	default:
 		blockReward.Set(FrontierBlockReward)
 	}
@@ -596,13 +589,11 @@ func accumulateRewards(config *params.ChainConfig, state *state.StateDB, header 
 
 //calculate mining reward proportional to difficulty
 func calcRewardDeliverance(header *types.Header) *big.Int {
-	// calculate reward proportional to difficulty
-	r := new(big.int)
+	// calculate reward proportional to sqrt of difficulty
+	r := new(big.Int)
 	r.Set(header.Difficulty)
 	r.Sqrt(r)
 	r.Mul(r, DeliveranceBlockReward)
-
-	// reward is cut by half every 18 months (5M blocks)
 
 	return r
 }
